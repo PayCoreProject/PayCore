@@ -1,0 +1,11 @@
+[Desktop Entry]
+Encoding=UTF-8
+Name=PCR
+Comment=PCR P2P Cryptocurrency
+Exec=paycore-qt %u
+Terminal=false
+Type=Application
+Icon=paycore128
+MimeType=x-scheme-handler/paycore;
+Categories=Office;Finance;
+Name[en_US]=paycore-qt.desktop

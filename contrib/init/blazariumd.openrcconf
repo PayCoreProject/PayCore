@@ -1,0 +1,26 @@
+# /etc/conf.d/paycored: config file for /etc/init.d/paycored
+
+# Config file location
+#BITCOIND_CONFIGFILE="/etc/paycore/paycore.conf"
+
+# What directory to write pidfile to?  (created and owned by $BITCOIND_USER)
+#BITCOIND_PIDDIR="/var/run/paycored"
+
+# What filename to give the pidfile
+#BITCOIND_PIDFILE="${BITCOIND_PIDDIR}/paycored.pid"
+
+# Where to write paycored data (be mindful that the blockchain is large)
+#BITCOIND_DATADIR="/var/lib/paycored"
+
+# User and group to own paycored process
+#BITCOIND_USER="paycore"
+#BITCOIND_GROUP="paycore"
+
+# Path to paycored executable
+#BITCOIND_BIN="/usr/bin/paycored"
+
+# Nice value to run paycored under
+#BITCOIND_NICE=0
+
+# Additional options (avoid -conf and -datadir, use flags above)
+BITCOIND_OPTS=""

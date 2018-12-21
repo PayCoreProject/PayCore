@@ -1,0 +1,11 @@
+[Protocol]
+exec=paycore-qt '%u'
+protocol=paycore
+input=none
+output=none
+helper=true
+listing=
+reading=false
+writing=false
+makedir=false
+deleting=false

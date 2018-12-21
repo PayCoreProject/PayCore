@@ -1,0 +1,26 @@
+[Unit]
+Description=PCR's distributed currency daemon
+After=network.target
+
+[Service]
+User=paycore
+Group=paycore
+
+Type=forking
+PIDFile=/var/lib/paycored/paycored.pid
+
+ExecStart=/usr/bin/paycored -daemon -pid=/var/lib/paycored/paycored.pid \
+          -conf=/etc/paycore/paycore.conf -datadir=/var/lib/paycored
+
+ExecStop=-/usr/bin/paycore-cli -conf=/etc/paycore/paycore.conf \
+         -datadir=/var/lib/paycored stop
+
+Restart=always
+PrivateTmp=true
+TimeoutStopSec=60s
+TimeoutStartSec=2s
+StartLimitInterval=120s
+StartLimitBurst=5
+
+[Install]
+WantedBy=multi-user.target
