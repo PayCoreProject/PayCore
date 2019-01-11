@@ -53,6 +53,8 @@ class CValidationState;
 struct CBlockTemplate;
 struct CNodeStateStats;
 
+#define FORK_HEIGHT 19900
+
 /** Masternode Amount **/
 inline int64_t GetMstrNodCollateral(int nHeight){
 
