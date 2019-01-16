@@ -72,6 +72,8 @@ bool fAlerts = DEFAULT_ALERTS;
 unsigned int nStakeMinAge = 6 * 60 * 60;
 int64_t nReserveBalance = 0;
 
+#define ENFORCEMENT_HEIGHT 27500
+
 /** Fees smaller than this (in duffs) are considered zero fee (for relaying and mining)
  * We are ~100 times smaller then bitcoin now (2015-06-23), set minRelayTxFee only 10 times higher
  * so it's still 10 times lower comparing to bitcoin.
@@ -2154,6 +2156,8 @@ bool ConnectBlock(const CBlock& block, CValidationState& state, CBlockIndex* pin
     blockundo.vtxundo.reserve(block.vtx.size() - 1);
     CAmount nValueOut = 0;
     CAmount nValueIn = 0;
+    CAmount nExpectedMint = 0;
+    
     for (unsigned int i = 0; i < block.vtx.size(); i++) {
         const CTransaction& tx = block.vtx[i];
 
@@ -2211,8 +2215,14 @@ bool ConnectBlock(const CBlock& block, CValidationState& state, CBlockIndex* pin
     pindex->nMint = nValueOut - nValueIn + nFees;
     pindex->nMoneySupply = nMoneySupplyPrev + nValueOut - nValueIn;
 
+	
     CAmount blockValue = GetBlockValue(pindex->pprev->nHeight);
-    CAmount nExpectedMint =  nFees + blockValue + GetMasternodePayment(pindex->pprev->nHeight, blockValue, Params().MaxMnCollateral());
+    
+    if(pindex->pprev->nHeight < ENFORCEMENT_HEIGHT)
+		nExpectedMint =  nFees + blockValue + GetMasternodePayment(pindex->pprev->nHeight, blockValue, Params().MaxMnCollateral());
+	else
+		nExpectedMint =  blockValue;
+    
     if (pindex->pprev->nHeight > 4200 && !IsBlockValueValid(block, nExpectedMint, pindex->nMint)) {
         return state.DoS(100,
             error("ConnectBlock() : reward pays too much (actual=%s vs limit=%s)",

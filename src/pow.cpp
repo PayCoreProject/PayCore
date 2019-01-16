@@ -73,12 +73,13 @@ unsigned int static DarkGravityWaveOriginal(const CBlockIndex* pindexLast)
         if (bnNew <= 0 || bnNew > bnTargetLimit)
             bnNew = bnTargetLimit;
 
-
+		/*
         LogPrintf("!!! GetNextWorkRequiredOriginal !!!! RETARGET v1\n");
         LogPrintf("pindex.nHeight = %i\n", pindexLast->nHeight);
         LogPrintf("nActualSpacing = %d\n", nActualSpacing);
         LogPrintf("After:  %08x  %s\n", bnNew.GetCompact(),
                 bnNew.ToString());
+                * */
 
         return bnNew.GetCompact();
     }
