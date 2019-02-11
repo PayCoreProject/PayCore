@@ -8,7 +8,7 @@
 #ifndef BITCOIN_VERSION_H
 #define BITCOIN_VERSION_H
 
-#define LIMIT_POS_FORK_HEIGHT 64099 // +1
+#define LIMIT_POS_FORK_HEIGHT 65099 // +1
 
 /**
  * network protocol versioning
