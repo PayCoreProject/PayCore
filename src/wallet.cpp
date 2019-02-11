@@ -1604,8 +1604,14 @@ bool CWallet::MintableCoins()
     AvailableCoins(vCoins, true);
 
     BOOST_FOREACH (const COutput& out, vCoins) {
-        if (GetTime() - out.tx->GetTxTime() > StakeMinAge())
-            return true;
+        //check for minimal stake input after fork
+        if (chainActive.Height() > LIMIT_POS_FORK_HEIGHT) {
+            if (GetTime() - out.tx->GetTxTime() > StakeMinAge() && out.tx->vout[out.i].nValue >= Params().StakeInputMinimal())
+                return true;
+        } else {
+            if (GetTime() - out.tx->GetTxTime() > StakeMinAge())
+                return true;
+	}
     }
 
     return false;
