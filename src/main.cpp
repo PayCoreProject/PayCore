@@ -1,7 +1,7 @@
 // Copyright (c) 2009-2010 Satoshi Nakamoto
 // Copyright (c) 2009-2014 The Bitcoin developers
 // Copyright (c) 2014-2015 The Dash developers
-// Copyright (c) 2015-2017 The PIVX developers 
+// Copyright (c) 2015-2017 The PIVX developers
 // Copyright (c) 2018 The Paycore developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
@@ -50,9 +50,11 @@ using namespace std;
  */
 
 CCriticalSection cs_main;
+CCriticalSection cs_mapstake;
 
 BlockMap mapBlockIndex;
 map<uint256, uint256> mapProofOfStake;
+map<COutPoint, int> mapStakeSpent;
 set<pair<COutPoint, unsigned int> > setStakeSeen;
 map<unsigned int, unsigned int> mapHashedBlocks;
 CChain chainActive;
@@ -70,6 +72,12 @@ unsigned int nCoinCacheSize = 5000;
 bool fAlerts = DEFAULT_ALERTS;
 
 unsigned int nStakeMinAge = 6 * 60 * 60;
+unsigned int StakeMinAge()
+{
+    if (chainActive.Height() > LIMIT_POS_FORK_HEIGHT)
+        return 12 * 60 * 60;
+    return nStakeMinAge;
+}
 int64_t nReserveBalance = 0;
 
 #define ENFORCEMENT_HEIGHT 27500
@@ -948,7 +956,7 @@ bool GetCoinAge(const CTransaction& tx, const unsigned int nTxTime, uint64_t& nC
         // Read block header
         CBlockHeader prevblock = pindex->GetBlockHeader();
 
-        if (prevblock.nTime + nStakeMinAge > nTxTime)
+        if (prevblock.nTime + StakeMinAge() > nTxTime)
             continue; // only count coins meeting min age requirement
 
         if (nTxTime < prevblock.nTime) {
@@ -1655,7 +1663,7 @@ int64_t GetBlockValue(int nHeight)
 		nSubsidy = 1.5 * COIN;
 	} else if (nHeight > 650000 && nHeight <= 1000000) {
 		nSubsidy = 0.5 * COIN;
-		
+
 	} else if (nHeight > 1000000) {
 		nSubsidy = 0.5 * COIN;
 	}
@@ -1670,9 +1678,9 @@ int64_t GetMasternodePayment(int nHeight, int64_t blockValue, int nMasternodeCou
         if (nHeight < 200)
             return 0;
     }
-	
+
 	int64_t ret = 0;
-	
+
 	if(nHeight <= 500 && nHeight > 0) {
         ret = blockValue / 100 * 0;
 	} else if (nHeight > 500 && nHeight <= 500000) {
@@ -1680,7 +1688,7 @@ int64_t GetMasternodePayment(int nHeight, int64_t blockValue, int nMasternodeCou
 	} else if (nHeight > 500000) {
         ret = blockValue / 100 * 75;
 	}
-	
+
     return ret;
 }
 bool IsInitialBlockDownload()
@@ -2023,6 +2031,11 @@ bool DisconnectBlock(CBlock& block, CValidationState& state, CBlockIndex* pindex
                 if (coins->vout.size() < out.n + 1)
                     coins->vout.resize(out.n + 1);
                 coins->vout[out.n] = undo.txout;
+                {
+                    LOCK(cs_mapstake);
+                    // erase the spent input
+                    mapStakeSpent.erase(out);
+                }
             }
         }
     }
@@ -2157,7 +2170,7 @@ bool ConnectBlock(const CBlock& block, CValidationState& state, CBlockIndex* pin
     CAmount nValueOut = 0;
     CAmount nValueIn = 0;
     CAmount nExpectedMint = 0;
-    
+
     for (unsigned int i = 0; i < block.vtx.size(); i++) {
         const CTransaction& tx = block.vtx[i];
 
@@ -2215,14 +2228,14 @@ bool ConnectBlock(const CBlock& block, CValidationState& state, CBlockIndex* pin
     pindex->nMint = nValueOut - nValueIn + nFees;
     pindex->nMoneySupply = nMoneySupplyPrev + nValueOut - nValueIn;
 
-	
+
     CAmount blockValue = GetBlockValue(pindex->pprev->nHeight);
-    
+
     if(pindex->pprev->nHeight < ENFORCEMENT_HEIGHT)
 		nExpectedMint =  nFees + blockValue + GetMasternodePayment(pindex->pprev->nHeight, blockValue, Params().MaxMnCollateral());
 	else
 		nExpectedMint =  blockValue;
-    
+
     if (pindex->pprev->nHeight > 4200 && !IsBlockValueValid(block, nExpectedMint, pindex->nMint)) {
         return state.DoS(100,
             error("ConnectBlock() : reward pays too much (actual=%s vs limit=%s)",
@@ -2267,6 +2280,31 @@ bool ConnectBlock(const CBlock& block, CValidationState& state, CBlockIndex* pin
     if (fTxIndex)
         if (!pblocktree->WriteTxIndex(vPos))
             return state.Abort("Failed to write transaction index");
+
+    {
+        LOCK(cs_mapstake);
+
+        // add new entries
+        for (const CTransaction tx: block.vtx) {
+            if (tx.IsCoinBase())
+                continue;
+            for (const CTxIn in: tx.vin) {
+                LogPrint("map", "mapStakeSpent: Insert %s | %u\n", in.prevout.ToString(), pindex->nHeight);
+                mapStakeSpent.insert(std::make_pair(in.prevout, pindex->nHeight));
+            }
+        }
+
+        // delete old entries
+        for (auto it = mapStakeSpent.begin(); it != mapStakeSpent.end();) {
+            if (it->second < pindex->nHeight - Params().MaxReorganizationDepth()) {
+                LogPrint("map", "mapStakeSpent: Erase %s | %u\n", it->first.ToString(), it->second);
+                it = mapStakeSpent.erase(it);
+            }
+            else {
+                it++;
+            }
+        }
+    }
 
     // add this block to the view's block chain
     view.SetBestBlock(pindex->GetBlockHash());
@@ -3145,31 +3183,38 @@ REJECT_INVALID, "bad-header", true);
         for (unsigned int i = 2; i < block.vtx.size(); i++)
             if (block.vtx[i].IsCoinStake())
                 return state.DoS(100, error("CheckBlock() : more than one coinstake"));
-                
-        //additional check against false PoS attack
-        
-		// Check for coin age.
-		// First try finding the previous transaction in database.
-		CTransaction txPrev;
-		uint256 hashBlockPrev;
-		if (!GetTransaction(block.vtx[1].vin[0].prevout.hash, txPrev, hashBlockPrev, true))
-			return state.DoS(100, error("CheckBlock() : stake failed to find vin transaction"));
-		// Find block in map.
-		CBlockIndex* pindex = NULL;
-		BlockMap::iterator it = mapBlockIndex.find(hashBlockPrev);
-		if (it != mapBlockIndex.end())
-			pindex = it->second;
-		else
-			return state.DoS(100, error("CheckBlock() :  stake failed to find block index"));
-		// Check block time vs stake age requirement.
-		if (pindex->GetBlockHeader().nTime + nStakeMinAge > GetAdjustedTime())
-			return state.DoS(100, error("CheckBlock() : stake under min. stake age"));
 
-		// Check that the prev. stake block has required confirmations by height.
-		LogPrintf("CheckBlock() : height=%d stake_tx_height=%d required_confirmations=%d got=%d\n", chainActive.Tip()->nHeight, pindex->nHeight, STAKE_MIN_CONF, chainActive.Tip()->nHeight - pindex->nHeight);
-		if (chainActive.Tip()->nHeight - pindex->nHeight < STAKE_MIN_CONF)
-			return state.DoS(100, error("CheckBlock() : stake under min. required confirmations"));
-		
+        CTransaction txPrev;
+    		uint256 hashBlockPrev;
+        //check for minimal stake input after fork
+        if (chainActive.Height() > LIMIT_POS_FORK_HEIGHT) {
+            if (!GetTransaction(block.vtx[1].vin[0].prevout.hash, txPrev, hashBlockPrev, true))
+      			    return state.DoS(100, error("CheckBlock() : stake failed to find vin transaction"));
+            if (txPrev.vout[block.vtx[1].vin[0].prevout.n].nValue < Params().StakeInputMinimal())
+                return state.DoS(100, error("CheckBlock() : stake input below minimum value"));
+        }
+/*
+        //additional check against false PoS attack
+    		// Check for coin age.
+    		// First try finding the previous transaction in database.
+    		if (!GetTransaction(block.vtx[1].vin[0].prevout.hash, txPrev, hashBlockPrev, true))
+    			return state.DoS(100, error("CheckBlock() : stake failed to find vin transaction"));
+    		// Find block in map.
+    		CBlockIndex* pindex = NULL;
+    		BlockMap::iterator it = mapBlockIndex.find(hashBlockPrev);
+    		if (it != mapBlockIndex.end())
+    			pindex = it->second;
+    		else
+    			return state.DoS(100, error("CheckBlock() :  stake failed to find block index"));
+    		// Check block time vs stake age requirement.
+    		if (pindex->GetBlockHeader().nTime + StakeMinAge() > GetAdjustedTime())
+    			return state.DoS(100, error("CheckBlock() : stake under min. stake age"));
+
+    		// Check that the prev. stake block has required confirmations by height.
+    		LogPrintf("CheckBlock() : height=%d stake_tx_height=%d required_confirmations=%d got=%d\n", chainActive.Tip()->nHeight, pindex->nHeight, STAKE_MIN_CONF, chainActive.Tip()->nHeight - pindex->nHeight);
+    		if (chainActive.Tip()->nHeight - pindex->nHeight < STAKE_MIN_CONF)
+    			return state.DoS(100, error("CheckBlock() : stake under min. required confirmations"));
+*/
     }
 
     // ----------- InstantX transaction scanning -----------
@@ -3243,7 +3288,7 @@ bool CheckWork(const CBlock block, CBlockIndex* const pindexPrev)
         return error("%s : null pindexPrev for block %s", __func__, block.GetHash().ToString().c_str());
 
     unsigned int nBitsRequired = GetNextWorkRequired(pindexPrev, &block, block.IsProofOfStake());
-	
+
     if (block.nBits != nBitsRequired)
         return error("%s : incorrect proof of work at %d", __func__, pindexPrev->nHeight + 1);
 
@@ -3409,6 +3454,66 @@ bool AcceptBlock(CBlock& block, CValidationState& state, CBlockIndex** ppindex, 
 
     int nHeight = pindex->nHeight;
 
+    if (block.IsProofOfStake()) {
+        LOCK(cs_main);
+
+        CCoinsViewCache coins(pcoinsTip);
+
+        if (!coins.HaveInputs(block.vtx[1])) {
+            LOCK(cs_mapstake);
+            // the inputs are spent at the chain tip so we should look at the recently spent outputs
+
+            for (CTxIn in : block.vtx[1].vin) {
+                auto it = mapStakeSpent.find(in.prevout);
+                if (it == mapStakeSpent.end()) {
+                    return false;
+                }
+                if (it->second < pindexPrev->nHeight) {
+                    return false;
+                }
+            }
+        }
+
+        // if this is on a fork
+        if (!chainActive.Contains(pindexPrev) && pindexPrev != NULL) {
+            // start at the block we're adding on to
+            CBlockIndex *last = pindexPrev;
+
+            CBlock bl;
+            int readBlock = 0;
+            // Go backwards on the forked chain up to the split
+            while (!chainActive.Contains(last) && last != NULL) {
+
+                if(readBlock == Params().MaxReorganizationDepth()){
+                    // Remove this chain from disk.
+                    return error("%s: forked chain longer than maximum reorg limit", __func__);
+                }
+                if(!ReadBlockFromDisk(bl, last))
+                    // Previous block not on disk
+                    return error("%s: previous block %s not on disk", __func__, last->GetBlockHash().GetHex());
+
+                // Increase amount of read blocks
+                readBlock++;
+                // loop through every spent input from said block
+                for (CTransaction t : bl.vtx) {
+                    for (CTxIn in: t.vin) {
+                        // loop through every spent input in the staking transaction of the new block
+                        for (CTxIn stakeIn : block.vtx[1].vin) {
+                            // if they spend the same input
+                            if (stakeIn.prevout == in.prevout) {
+                                // reject the block
+                                return state.DoS(100, error("%s: input already spent on a previous block",__func__));
+                            }
+                        }
+                    }
+                }
+
+                // go to the parent block
+                last = last->pprev;
+            }
+        }
+    }
+
     // Write block to history file
     try {
         unsigned int nBlockSize = ::GetSerializeSize(block, SER_DISK, CLIENT_VERSION);
@@ -3505,6 +3610,11 @@ bool ProcessNewBlock(CValidationState& state, CNode* pfrom, CBlock* pblock, CDis
     if (!pblock->CheckBlockSignature())
         return error("ProcessNewBlock() : bad proof-of-stake block signature");
 
+    //fixes crashes that occurs with at least one case of a corrupted
+    if (pblock->GetHash() != Params().HashGenesisBlock() && pblock->hashPrevBlock.IsNull()) {
+        return error("ProcessNewBlock() : Null previous block");
+    }
+
     if (pblock->GetHash() != Params().HashGenesisBlock() && pfrom != NULL) {
         //if we get this far, check if the prev block is our prev block, if not then request sync and return false
         BlockMap::iterator mi = mapBlockIndex.find(pblock->hashPrevBlock);
@@ -3514,12 +3624,8 @@ bool ProcessNewBlock(CValidationState& state, CNode* pfrom, CBlock* pblock, CDis
         }
     }
 
-    while (true) {
-        TRY_LOCK(cs_main, lockMain);
-        if (!lockMain) {
-            MilliSleep(50);
-            continue;
-        }
+    {
+        LOCK(cs_main);   // Replaces the former TRY_LOCK loop because busy waiting wastes too much resources
 
         MarkBlockAsReceived(pblock->GetHash());
         if (!checked) {
@@ -3535,7 +3641,6 @@ bool ProcessNewBlock(CValidationState& state, CNode* pfrom, CBlock* pblock, CDis
         CheckBlockIndex();
         if (!ret)
             return error("%s : AcceptBlock FAILED", __func__);
-        break;
     }
 
     if (!ActivateBestChain(state, pblock))
@@ -4722,6 +4827,10 @@ bool static ProcessMessage(CNode* pfrom, string strCommand, CDataStream& vRecv, 
         return false;
     }
 
+    else if (pfrom->DisconnectOldProtocol(ActiveProtocol(), strCommand)) {
+        // Instantly disconnect old protocol
+        return false;
+    }
 
     else if (strCommand == "verack") {
         pfrom->SetRecvVersion(min(pfrom->nVersion, PROTOCOL_VERSION));
@@ -5413,13 +5522,13 @@ bool static ProcessMessage(CNode* pfrom, string strCommand, CDataStream& vRecv, 
 }
 
 // Note: whenever a protocol update is needed toggle between both implementations (comment out the formerly active one)
-//       so we can leave the existing clients untouched (old SPORK will stay on so they don't see even older clients). 
+//       so we can leave the existing clients untouched (old SPORK will stay on so they don't see even older clients).
 //       Those old clients won't react to the changes of the other (new) SPORK because at the time of their implementation
 //       it was the one which was commented out
 int ActiveProtocol()
 {
 
-    if (chainActive.Height() >= FORK_HEIGHT)
+    if (chainActive.Height() > LIMIT_POS_FORK_HEIGHT)
             return MIN_PEER_PROTO_VERSION_AFTER_ENFORCEMENT;
 
     return MIN_PEER_PROTO_VERSION_BEFORE_ENFORCEMENT;

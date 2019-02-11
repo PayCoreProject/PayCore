@@ -112,6 +112,7 @@ public:
         nLastPOWBlock = 500;
         nMaturity = 35;
         nMasternodeCountDrift = 20;
+        nStakeInputMinimal = 10 * COIN;
 	   // nMasternodeColleteralLimxDev = 1000; //Params().MasternodeColleteralLimxDev()
         nModifierUpdateBlock = 1; // we use the version 2 for dmd
         nMaxMoneyOut = 5000000 * COIN;
@@ -147,11 +148,11 @@ public:
 				printf("nonce %08u: hash = %s \n", genesis.nNonce, genesis.GetHash().ToString().c_str());
 			}
         }
-		
+
         hashGenesisBlock = genesis.GetHash();
         assert(hashGenesisBlock == uint256("0x00000029e28d0dcd89ba4ba395d0c5575cd6a9a3fb23df77bc2ec088f50f5781"));
         assert(genesis.hashMerkleRoot == uint256("0xca4c48002922e783d711d9b7444f416ffeeacf23dee76ebaca7acf4bc4fa66f7"));
-        
+
         vSeeds.push_back(CDNSSeedData("51.75.69.241:17317", "51.75.69.241:17317"));
         vSeeds.push_back(CDNSSeedData("51.75.69.242:17317", "51.75.69.242:17317"));
         vSeeds.push_back(CDNSSeedData("51.75.69.243:17317", "51.75.69.243:17317"));
@@ -182,7 +183,7 @@ public:
         nPoolMaxTransactions = 3;
         strSporkKey = "04ece659a25832412250c5929fd002ee7ceed138a50c9dc2d37ae84c706b725b83113abdcdf9f009e0bf87f5331cfe466555044ac77a4289cebe12a5a249e3d13b";
         strDarksendPoolDummyAddress = "PmHnhQPqT8t5qTbL3HLM7GceMcXWHcDtdW";
-        nStartMasternodePayments = 1545144609; 
+        nStartMasternodePayments = 1545144609;
     }
 
     const Checkpoints::CCheckpointData& Checkpoints() const
@@ -328,7 +329,7 @@ public:
 	    printf("RT hashGenesisBlock %s\n", hashGenesisBlock.ToString().c_str());
 	    printf("RT hashMerkleRoot %s\n", genesis.hashMerkleRoot.ToString().c_str());
         printf("RT nTime %u\n", genesis.nTime);*/
-		
+
         hashGenesisBlock = genesis.GetHash();
         nDefaultPort = 22988;
         assert(hashGenesisBlock == uint256("0x4b3d31c115d767ffe82196d0f9aa8f1d33c81fa7763d8afffe50c84a51ccf6f5"));
