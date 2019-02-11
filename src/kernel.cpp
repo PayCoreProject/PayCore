@@ -25,8 +25,11 @@ unsigned int getIntervalVersion(bool fTestNet)
 {
     if (fTestNet)
         return MODIFIER_INTERVAL_TESTNET;
-    else
+    else {
+        if (chainActive.Height() > LIMIT_POS_FORK_HEIGHT)
+            return StakeMinAge() / 60;
         return MODIFIER_INTERVAL;
+    }
 }
 
 // Hard checkpoints of stake modifiers to ensure they are deterministic
