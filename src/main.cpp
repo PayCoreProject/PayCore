@@ -3184,12 +3184,18 @@ REJECT_INVALID, "bad-header", true);
             if (block.vtx[i].IsCoinStake())
                 return state.DoS(100, error("CheckBlock() : more than one coinstake"));
 
-        CTransaction txPrev;
-    		uint256 hashBlockPrev;
         //check for minimal stake input after fork
-        if (chainActive.Height() > LIMIT_POS_FORK_HEIGHT) {
+        CBlockIndex* pindex = NULL;
+        CTransaction txPrev;
+    	uint256 hashBlockPrev = block.hashPrevBlock;
+        BlockMap::iterator it = mapBlockIndex.find(hashBlockPrev);
+        if (it != mapBlockIndex.end())
+            pindex = it->second;
+    	else
+            return state.DoS(100, error("CheckBlock() : stake failed to find block index"));
+        if (pindex->nHeight > LIMIT_POS_FORK_HEIGHT) {
             if (!GetTransaction(block.vtx[1].vin[0].prevout.hash, txPrev, hashBlockPrev, true))
-      			    return state.DoS(100, error("CheckBlock() : stake failed to find vin transaction"));
+      		return state.DoS(100, error("CheckBlock() : stake failed to find vin transaction"));
             if (txPrev.vout[block.vtx[1].vin[0].prevout.n].nValue < Params().StakeInputMinimal())
                 return state.DoS(100, error("CheckBlock() : stake input below minimum value"));
         }
